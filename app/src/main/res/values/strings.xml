@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">CondoZulia</string>
+    <string name="sign_in_google">Continuar con Google</string>
+    <string name="hero_banner_desc">Vista arquitectónica de conjunto residencial en Maracaibo</string>
+    <string name="notification_channel_name">Recordatorios de Condominio</string>
+    <string name="notification_channel_desc">Notificaciones sobre cuotas pendientes, conciliación de pagos y pases de garita</string>
+</resources>

@@ -1,0 +1,792 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function isBoundedUidList(list) {
+      return list is list && list.size() >= 1 && list.size() <= 50 && list[0] is string;
+    }
+
+    // --- 1. User Profiles ---
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+             (!('activeCondoId' in data) || (data.activeCondoId is string && data.activeCondoId.size() <= 128)) &&
+             (!('activeUnitId' in data) || (data.activeUnitId is string && data.activeUnitId.size() <= 128)) &&
+             data.activeRole is string && data.activeRole in ['junta', 'vecino', 'garita'] &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    match /users/{userId} {
+      allow get, list: if isSignedIn() && request.auth.uid == userId;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'activeRole', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'activeCondoId', 'activeUnitId', 'activeRole', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       isValidUserProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'activeCondoId', 'activeUnitId', 'activeRole', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // --- 2. Condo Invite Code Index ---
+    function isValidCondoCode(data) {
+      return data.condoId is string && isValidId(data.condoId) &&
+             data.condoName is string && data.condoName.size() >= 2 && data.condoName.size() <= 100 &&
+             data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    match /condoCodes/{joinCode} {
+      allow get: if isSignedIn() && isValidId(joinCode);
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+                       isValidId(joinCode) &&
+                       joinCode.size() >= 4 && joinCode.size() <= 16 &&
+                       incoming().adminUid == request.auth.uid &&
+                       incoming().keys().hasAll(['condoId', 'condoName', 'adminUid', 'createdAt']) &&
+                       incoming().keys().hasOnly(['condoId', 'condoName', 'adminUid', 'createdAt']) &&
+                       isValidCondoCode(incoming());
+
+      allow update, delete: if isSignedIn() &&
+                               isValidId(joinCode) &&
+                               existing().adminUid == request.auth.uid;
+    }
+
+    // --- 3. Condominiums ---
+    function isValidCondominium(data) {
+      return data.name is string && data.name.size() >= 2 && data.name.size() <= 100 &&
+             (!('address' in data) || (data.address is string && data.address.size() <= 160)) &&
+             data.joinCode is string && data.joinCode.size() >= 4 && data.joinCode.size() <= 16 &&
+             data.bcvRate is number && data.bcvRate > 0 && data.bcvRate <= 1000000 &&
+             (!('pagoMovilBank' in data) || (data.pagoMovilBank is string && data.pagoMovilBank.size() <= 60)) &&
+             (!('pagoMovilPhone' in data) || (data.pagoMovilPhone is string && data.pagoMovilPhone.size() <= 30)) &&
+             (!('pagoMovilId' in data) || (data.pagoMovilId is string && data.pagoMovilId.size() <= 30)) &&
+             (!('transferBank' in data) || (data.transferBank is string && data.transferBank.size() <= 60)) &&
+             (!('transferAccount' in data) || (data.transferAccount is string && data.transferAccount.size() <= 40)) &&
+             data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+             isBoundedUidList(data.memberUids) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    match /condominiums/{condoId} {
+      allow get: if isSignedIn() &&
+                    (existing().adminUid == request.auth.uid || request.auth.uid in existing().memberUids);
+
+      allow list: if isSignedIn() &&
+                     (resource.data.adminUid == request.auth.uid || request.auth.uid in resource.data.memberUids);
+
+      allow create: if isSignedIn() &&
+                       isValidId(condoId) &&
+                       incoming().adminUid == request.auth.uid &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().keys().hasAll(['name', 'joinCode', 'bcvRate', 'adminUid', 'memberUids', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly([
+                         'name', 'address', 'joinCode', 'bcvRate',
+                         'pagoMovilBank', 'pagoMovilPhone', 'pagoMovilId',
+                         'transferBank', 'transferAccount',
+                         'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidCondominium(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(condoId) &&
+                       isValidCondominium(incoming()) &&
+                       incoming().adminUid == existing().adminUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action 1: Admin updates condo config / BCV rate / bank accounts / members
+                         (existing().adminUid == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'name', 'address', 'bcvRate',
+                            'pagoMovilBank', 'pagoMovilPhone', 'pagoMovilId',
+                            'transferBank', 'transferAccount', 'memberUids', 'updatedAt'
+                          ])) ||
+                         // Action 2: Authenticated user joins via matching joinCode
+                         (incoming().joinCode == existing().joinCode &&
+                          incoming().memberUids.hasAll(existing().memberUids) &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(condoId) && existing().adminUid == request.auth.uid;
+
+      // --- 3a. Units (Apartments / Houses) ---
+      function isValidUnit(data) {
+        return data.condoId is string && data.condoId == condoId &&
+               data.unitNumber is string && data.unitNumber.size() >= 1 && data.unitNumber.size() <= 40 &&
+               data.ownerLabel is string && data.ownerLabel.size() >= 1 && data.ownerLabel.size() <= 80 &&
+               data.alicuotaPct is number && data.alicuotaPct > 0 && data.alicuotaPct <= 100 &&
+               data.residentUid is string && data.residentUid.size() <= 128 &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /units/{unitId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid || request.auth.uid in existing().memberUids);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid || request.auth.uid in resource.data.memberUids);
+
+        allow create: if isSignedIn() &&
+                         isValidId(unitId) &&
+                         incoming().adminUid == request.auth.uid &&
+                         request.auth.uid in incoming().memberUids &&
+                         incoming().keys().hasAll([
+                           'condoId', 'unitNumber', 'ownerLabel', 'alicuotaPct',
+                           'residentUid', 'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condoId', 'unitNumber', 'ownerLabel', 'alicuotaPct',
+                           'residentUid', 'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidUnit(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominiums/$(condoId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(unitId) &&
+                         isValidUnit(incoming()) &&
+                         incoming().condoId == existing().condoId &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           (existing().adminUid == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'unitNumber', 'ownerLabel', 'alicuotaPct', 'residentUid', 'memberUids', 'updatedAt'
+                            ])) ||
+                           (request.auth.uid in existing().memberUids &&
+                            existing().residentUid == '' &&
+                            incoming().residentUid == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['residentUid', 'updatedAt']))
+                         );
+
+        allow delete: if isSignedIn() && isValidId(unitId) && existing().adminUid == request.auth.uid;
+      }
+
+      // --- 3b. Monthly Expenses ---
+      function isValidExpense(data) {
+        return data.condoId is string && data.condoId == condoId &&
+               data.billingPeriod is string && data.billingPeriod.size() >= 6 && data.billingPeriod.size() <= 16 &&
+               data.title is string && data.title.size() >= 2 && data.title.size() <= 100 &&
+               data.category is string && data.category.size() >= 2 && data.category.size() <= 40 &&
+               data.amountUsd is number && data.amountUsd > 0 && data.amountUsd <= 10000000 &&
+               data.amountBs is number && data.amountBs >= 0 && data.amountBs <= 10000000000 &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /expenses/{expenseId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid || request.auth.uid in existing().memberUids);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid || request.auth.uid in resource.data.memberUids);
+
+        allow create: if isSignedIn() &&
+                         isValidId(expenseId) &&
+                         incoming().adminUid == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'condoId', 'billingPeriod', 'title', 'category',
+                           'amountUsd', 'amountBs', 'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condoId', 'billingPeriod', 'title', 'category',
+                           'amountUsd', 'amountBs', 'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidExpense(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominiums/$(condoId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(expenseId) &&
+                         existing().adminUid == request.auth.uid &&
+                         isValidExpense(incoming()) &&
+                         incoming().condoId == existing().condoId &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'billingPeriod', 'title', 'category', 'amountUsd', 'amountBs', 'memberUids', 'updatedAt'
+                         ]);
+
+        allow delete: if isSignedIn() && isValidId(expenseId) && existing().adminUid == request.auth.uid;
+      }
+
+      // --- 3c. Unit Invoices (Recibos / Alícuotas) ---
+      function isValidInvoice(data) {
+        return data.condoId is string && data.condoId == condoId &&
+               data.unitId is string && isValidId(data.unitId) &&
+               data.unitNumber is string && data.unitNumber.size() >= 1 && data.unitNumber.size() <= 40 &&
+               data.billingPeriod is string && data.billingPeriod.size() >= 6 && data.billingPeriod.size() <= 16 &&
+               data.alicuotaPct is number && data.alicuotaPct > 0 && data.alicuotaPct <= 100 &&
+               data.totalCondoUsd is number && data.totalCondoUsd >= 0 && data.totalCondoUsd <= 10000000 &&
+               data.amountDueUsd is number && data.amountDueUsd >= 0 && data.amountDueUsd <= 10000000 &&
+               data.bcvRate is number && data.bcvRate > 0 && data.bcvRate <= 1000000 &&
+               data.amountDueBs is number && data.amountDueBs >= 0 && data.amountDueBs <= 10000000000 &&
+               data.status is string && data.status in ['pending', 'in_review', 'paid', 'overdue'] &&
+               data.receiptNumber is string && data.receiptNumber.size() >= 3 && data.receiptNumber.size() <= 40 &&
+               data.paidAtMs is int && data.paidAtMs >= 0 &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               data.residentUid is string && data.residentUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /invoices/{invoiceId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid ||
+                       existing().residentUid == request.auth.uid ||
+                       request.auth.uid in existing().memberUids);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid ||
+                        resource.data.residentUid == request.auth.uid ||
+                        request.auth.uid in resource.data.memberUids);
+
+        allow create: if isSignedIn() &&
+                         isValidId(invoiceId) &&
+                         incoming().adminUid == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'condoId', 'unitId', 'unitNumber', 'billingPeriod', 'alicuotaPct',
+                           'totalCondoUsd', 'amountDueUsd', 'bcvRate', 'amountDueBs',
+                           'status', 'receiptNumber', 'paidAtMs', 'adminUid', 'residentUid',
+                           'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condoId', 'unitId', 'unitNumber', 'billingPeriod', 'alicuotaPct',
+                           'totalCondoUsd', 'amountDueUsd', 'bcvRate', 'amountDueBs',
+                           'status', 'receiptNumber', 'paidAtMs', 'adminUid', 'residentUid',
+                           'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidInvoice(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominiums/$(condoId)/units/$(incoming().unitId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(invoiceId) &&
+                         isValidInvoice(incoming()) &&
+                         incoming().condoId == existing().condoId &&
+                         incoming().unitId == existing().unitId &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           // Action 1: Admin updates amounts/status/reconciliation
+                           (existing().adminUid == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'alicuotaPct', 'totalCondoUsd', 'amountDueUsd', 'bcvRate',
+                              'amountDueBs', 'status', 'paidAtMs', 'residentUid', 'memberUids', 'updatedAt'
+                            ])) ||
+                           // Action 2: Resident submits payment report -> pending/overdue -> in_review
+                           ((existing().residentUid == request.auth.uid || request.auth.uid in existing().memberUids) &&
+                            existing().status in ['pending', 'overdue'] &&
+                            incoming().status == 'in_review' &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+                         );
+
+        allow delete: if isSignedIn() && isValidId(invoiceId) && existing().adminUid == request.auth.uid;
+      }
+
+      // --- 3d. Payment Reports (Pago Móvil / Transferencias) ---
+      function isValidPayment(data) {
+        return data.condoId is string && data.condoId == condoId &&
+               data.invoiceId is string && isValidId(data.invoiceId) &&
+               data.unitId is string && isValidId(data.unitId) &&
+               data.unitNumber is string && data.unitNumber.size() >= 1 && data.unitNumber.size() <= 40 &&
+               data.billingPeriod is string && data.billingPeriod.size() >= 6 && data.billingPeriod.size() <= 16 &&
+               data.method is string && data.method in ['pago_movil', 'transferencia', 'efectivo_usd', 'zelle'] &&
+               data.bankName is string && data.bankName.size() >= 2 && data.bankName.size() <= 60 &&
+               data.referenceNumber is string && data.referenceNumber.size() >= 3 && data.referenceNumber.size() <= 40 &&
+               (!('senderPhone' in data) || (data.senderPhone is string && data.senderPhone.size() <= 24)) &&
+               data.currency is string && data.currency in ['VES', 'USD'] &&
+               data.amountReported is number && data.amountReported > 0 && data.amountReported <= 10000000000 &&
+               data.amountUsdEquivalent is number && data.amountUsdEquivalent > 0 && data.amountUsdEquivalent <= 10000000 &&
+               data.bcvRateUsed is number && data.bcvRateUsed > 0 && data.bcvRateUsed <= 1000000 &&
+               data.paymentDate is string && data.paymentDate.size() >= 6 && data.paymentDate.size() <= 20 &&
+               (!('receiptPreviewBase64' in data) || (data.receiptPreviewBase64 is string && data.receiptPreviewBase64.size() <= 80000)) &&
+               data.status is string && data.status in ['pending_review', 'approved', 'rejected'] &&
+               (!('reviewNote' in data) || (data.reviewNote is string && data.reviewNote.size() <= 200)) &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               data.reportedByUid is string && data.reportedByUid.size() >= 1 && data.reportedByUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /payments/{paymentId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid || existing().reportedByUid == request.auth.uid);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid || resource.data.reportedByUid == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(paymentId) &&
+                         incoming().reportedByUid == request.auth.uid &&
+                         incoming().status == 'pending_review' &&
+                         incoming().keys().hasAll([
+                           'condoId', 'invoiceId', 'unitId', 'unitNumber', 'billingPeriod',
+                           'method', 'bankName', 'referenceNumber', 'currency',
+                           'amountReported', 'amountUsdEquivalent', 'bcvRateUsed', 'paymentDate',
+                           'status', 'adminUid', 'reportedByUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condoId', 'invoiceId', 'unitId', 'unitNumber', 'billingPeriod',
+                           'method', 'bankName', 'referenceNumber', 'senderPhone', 'currency',
+                           'amountReported', 'amountUsdEquivalent', 'bcvRateUsed', 'paymentDate',
+                           'receiptPreviewBase64', 'status', 'reviewNote',
+                           'adminUid', 'reportedByUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidPayment(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominiums/$(condoId)/invoices/$(incoming().invoiceId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(paymentId) &&
+                         existing().adminUid == request.auth.uid &&
+                         existing().status == 'pending_review' &&
+                         isValidPayment(incoming()) &&
+                         incoming().condoId == existing().condoId &&
+                         incoming().invoiceId == existing().invoiceId &&
+                         incoming().reportedByUid == existing().reportedByUid &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().status in ['approved', 'rejected'] &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'reviewNote', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(paymentId) && existing().adminUid == request.auth.uid;
+      }
+
+      // --- 3e. Visitor QR Passes (Garita) ---
+      function isValidVisitorPass(data) {
+        return data.condoId is string && data.condoId == condoId &&
+               data.unitId is string && isValidId(data.unitId) &&
+               data.unitNumber is string && data.unitNumber.size() >= 1 && data.unitNumber.size() <= 40 &&
+               data.visitorName is string && data.visitorName.size() >= 2 && data.visitorName.size() <= 80 &&
+               data.visitorCedula is string && data.visitorCedula.size() >= 4 && data.visitorCedula.size() <= 24 &&
+               (!('vehiclePlate' in data) || (data.vehiclePlate is string && data.vehiclePlate.size() <= 16)) &&
+               data.visitType is string && data.visitType in ['Visita', 'Delivery', 'Servicio'] &&
+               data.qrToken is string && data.qrToken.size() >= 6 && data.qrToken.size() <= 64 &&
+               data.status is string && data.status in ['active', 'checked_in', 'checked_out', 'cancelled'] &&
+               data.checkedInAtMs is int && data.checkedInAtMs >= 0 &&
+               data.checkedOutAtMs is int && data.checkedOutAtMs >= 0 &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /visitorPasses/{passId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid ||
+                       existing().createdByUid == request.auth.uid ||
+                       request.auth.uid in existing().memberUids);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid ||
+                        resource.data.createdByUid == request.auth.uid ||
+                        request.auth.uid in resource.data.memberUids);
+
+        allow create: if isSignedIn() &&
+                         isValidId(passId) &&
+                         incoming().createdByUid == request.auth.uid &&
+                         incoming().status == 'active' &&
+                         incoming().keys().hasAll([
+                           'condoId', 'unitId', 'unitNumber', 'visitorName', 'visitorCedula',
+                           'visitType', 'qrToken', 'status', 'checkedInAtMs', 'checkedOutAtMs',
+                           'adminUid', 'createdByUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condoId', 'unitId', 'unitNumber', 'visitorName', 'visitorCedula',
+                           'vehiclePlate', 'visitType', 'qrToken', 'status', 'checkedInAtMs', 'checkedOutAtMs',
+                           'adminUid', 'createdByUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidVisitorPass(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominiums/$(condoId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(passId) &&
+                         isValidVisitorPass(incoming()) &&
+                         incoming().condoId == existing().condoId &&
+                         incoming().qrToken == existing().qrToken &&
+                         incoming().createdByUid == existing().createdByUid &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           (existing().adminUid == request.auth.uid &&
+                            incoming().status == existing().status &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt'])) ||
+                           (!(existing().status in ['checked_out', 'cancelled']) &&
+                            (existing().adminUid == request.auth.uid ||
+                             existing().createdByUid == request.auth.uid ||
+                             request.auth.uid in existing().memberUids) &&
+                            (
+                              (existing().status == 'active' && incoming().status == 'checked_in' &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'checkedInAtMs', 'updatedAt'])) ||
+                              (existing().status == 'checked_in' && incoming().status == 'checked_out' &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'checkedOutAtMs', 'updatedAt'])) ||
+                              (existing().status == 'active' && incoming().status == 'cancelled' &&
+                               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']))
+                            ))
+                         );
+
+        allow delete: if isSignedIn() &&
+                         isValidId(passId) &&
+                         (existing().adminUid == request.auth.uid || existing().createdByUid == request.auth.uid);
+      }
+
+      // --- 3f. Payment Reminders ---
+      function isValidReminder(data) {
+        return data.condoId is string && data.condoId == condoId &&
+               data.unitId is string && isValidId(data.unitId) &&
+               data.unitNumber is string && data.unitNumber.size() >= 1 && data.unitNumber.size() <= 40 &&
+               data.invoiceId is string && isValidId(data.invoiceId) &&
+               data.billingPeriod is string && data.billingPeriod.size() >= 6 && data.billingPeriod.size() <= 16 &&
+               data.title is string && data.title.size() >= 2 && data.title.size() <= 100 &&
+               data.message is string && data.message.size() >= 4 && data.message.size() <= 300 &&
+               data.amountDueUsd is number && data.amountDueUsd >= 0 && data.amountDueUsd <= 10000000 &&
+               data.amountDueBs is number && data.amountDueBs >= 0 && data.amountDueBs <= 10000000000 &&
+               data.isRead is bool &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               data.targetUid is string && data.targetUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /reminders/{reminderId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid ||
+                       existing().targetUid == request.auth.uid ||
+                       request.auth.uid in existing().memberUids);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid ||
+                        resource.data.targetUid == request.auth.uid ||
+                        request.auth.uid in resource.data.memberUids);
+
+        allow create: if isSignedIn() &&
+                         isValidId(reminderId) &&
+                         incoming().adminUid == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'condoId', 'unitId', 'unitNumber', 'invoiceId', 'billingPeriod',
+                           'title', 'message', 'amountDueUsd', 'amountDueBs', 'isRead',
+                           'adminUid', 'targetUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condoId', 'unitId', 'unitNumber', 'invoiceId', 'billingPeriod',
+                           'title', 'message', 'amountDueUsd', 'amountDueBs', 'isRead',
+                           'adminUid', 'targetUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidReminder(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominiums/$(condoId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(reminderId) &&
+                         isValidReminder(incoming()) &&
+                         incoming().condoId == existing().condoId &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           (existing().adminUid == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt'])) ||
+                           ((existing().adminUid == request.auth.uid ||
+                             existing().targetUid == request.auth.uid ||
+                             request.auth.uid in existing().memberUids) &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['isRead', 'updatedAt']))
+                         );
+
+        allow delete: if isSignedIn() && isValidId(reminderId) && existing().adminUid == request.auth.uid;
+      }
+    }
+
+    // --- 4. Colección 'condominios' y subcolecciones ('vecinos', 'gastos_mensuales', 'pagos_reportados') ---
+    function isValidCondominio(data) {
+      return data.nombre is string && data.nombre.size() >= 2 && data.nombre.size() <= 100 &&
+             (!('direccion' in data) || (data.direccion is string && data.direccion.size() <= 160)) &&
+             data.codigoAcceso is string && data.codigoAcceso.size() >= 4 && data.codigoAcceso.size() <= 16 &&
+             data.tasaBcv is number && data.tasaBcv > 0 && data.tasaBcv <= 1000000 &&
+             (!('bancoPagoMovil' in data) || (data.bancoPagoMovil is string && data.bancoPagoMovil.size() <= 60)) &&
+             (!('telefonoPagoMovil' in data) || (data.telefonoPagoMovil is string && data.telefonoPagoMovil.size() <= 30)) &&
+             (!('rifPagoMovil' in data) || (data.rifPagoMovil is string && data.rifPagoMovil.size() <= 30)) &&
+             (!('bancoTransferencia' in data) || (data.bancoTransferencia is string && data.bancoTransferencia.size() <= 60)) &&
+             (!('cuentaTransferencia' in data) || (data.cuentaTransferencia is string && data.cuentaTransferencia.size() <= 40)) &&
+             data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+             isBoundedUidList(data.memberUids) &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    match /condominios/{condominioId} {
+      allow get: if isSignedIn() &&
+                    (existing().adminUid == request.auth.uid || request.auth.uid in existing().memberUids);
+
+      allow list: if isSignedIn() &&
+                     (resource.data.adminUid == request.auth.uid || request.auth.uid in resource.data.memberUids);
+
+      allow create: if isSignedIn() &&
+                       isValidId(condominioId) &&
+                       incoming().adminUid == request.auth.uid &&
+                       request.auth.uid in incoming().memberUids &&
+                       incoming().keys().hasAll([
+                         'nombre', 'codigoAcceso', 'tasaBcv', 'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'nombre', 'direccion', 'codigoAcceso', 'tasaBcv',
+                         'bancoPagoMovil', 'telefonoPagoMovil', 'rifPagoMovil',
+                         'bancoTransferencia', 'cuentaTransferencia',
+                         'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidCondominio(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(condominioId) &&
+                       isValidCondominio(incoming()) &&
+                       incoming().adminUid == existing().adminUid &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         (existing().adminUid == request.auth.uid &&
+                          incoming().diff(existing()).affectedKeys().hasOnly([
+                            'nombre', 'direccion', 'codigoAcceso', 'tasaBcv',
+                            'bancoPagoMovil', 'telefonoPagoMovil', 'rifPagoMovil',
+                            'bancoTransferencia', 'cuentaTransferencia', 'memberUids', 'updatedAt'
+                          ])) ||
+                         (incoming().codigoAcceso == existing().codigoAcceso &&
+                          incoming().memberUids.hasAll(existing().memberUids) &&
+                          request.auth.uid in incoming().memberUids &&
+                          incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'updatedAt']))
+                       );
+
+      allow delete: if isSignedIn() && isValidId(condominioId) && existing().adminUid == request.auth.uid;
+
+      // --- 4a. Subcolección 'vecinos' ---
+      function isValidVecino(data) {
+        return data.condominioId is string && data.condominioId == condominioId &&
+               data.unidad is string && data.unidad.size() >= 1 && data.unidad.size() <= 40 &&
+               data.nombreCompleto is string && data.nombreCompleto.size() >= 1 && data.nombreCompleto.size() <= 80 &&
+               (!('telefono' in data) || (data.telefono is string && data.telefono.size() <= 30)) &&
+               data.alicuotaPct is number && data.alicuotaPct > 0 && data.alicuotaPct <= 100 &&
+               data.saldoPendienteUsd is number && data.saldoPendienteUsd >= 0 && data.saldoPendienteUsd <= 10000000 &&
+               data.saldoPendienteBs is number && data.saldoPendienteBs >= 0 && data.saldoPendienteBs <= 10000000000 &&
+               data.estadoSolvencia is string && data.estadoSolvencia in ['solvente', 'pendiente', 'en_revision', 'moroso'] &&
+               (!('codigoAcceso' in data) || (data.codigoAcceso is string && data.codigoAcceso.size() <= 24)) &&
+               data.residentUid is string && data.residentUid.size() <= 128 &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /vecinos/{vecinoId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid || request.auth.uid in existing().memberUids);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid || request.auth.uid in resource.data.memberUids);
+
+        allow create: if isSignedIn() &&
+                         isValidId(vecinoId) &&
+                         incoming().adminUid == request.auth.uid &&
+                         request.auth.uid in incoming().memberUids &&
+                         incoming().keys().hasAll([
+                           'condominioId', 'unidad', 'nombreCompleto', 'alicuotaPct',
+                           'saldoPendienteUsd', 'saldoPendienteBs', 'estadoSolvencia',
+                           'residentUid', 'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condominioId', 'unidad', 'nombreCompleto', 'telefono', 'alicuotaPct',
+                           'saldoPendienteUsd', 'saldoPendienteBs', 'estadoSolvencia', 'codigoAcceso',
+                           'residentUid', 'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidVecino(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominios/$(condominioId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(vecinoId) &&
+                         isValidVecino(incoming()) &&
+                         incoming().condominioId == existing().condominioId &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         (
+                           (existing().adminUid == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly([
+                              'unidad', 'nombreCompleto', 'telefono', 'alicuotaPct',
+                              'saldoPendienteUsd', 'saldoPendienteBs', 'estadoSolvencia', 'codigoAcceso',
+                              'residentUid', 'memberUids', 'updatedAt'
+                            ])) ||
+                           (request.auth.uid in existing().memberUids &&
+                            existing().residentUid == '' &&
+                            incoming().residentUid == request.auth.uid &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['residentUid', 'updatedAt'])) ||
+                           ((existing().residentUid == request.auth.uid || request.auth.uid in existing().memberUids) &&
+                            existing().estadoSolvencia in ['pendiente', 'moroso'] &&
+                            incoming().estadoSolvencia == 'en_revision' &&
+                            incoming().diff(existing()).affectedKeys().hasOnly(['estadoSolvencia', 'updatedAt']))
+                         );
+
+        allow delete: if isSignedIn() && isValidId(vecinoId) && existing().adminUid == request.auth.uid;
+      }
+
+      // --- 4b. Subcolección 'gastos_mensuales' ---
+      function isValidGastoMensual(data) {
+        return data.condominioId is string && data.condominioId == condominioId &&
+               data.periodoMes is string && data.periodoMes.size() >= 6 && data.periodoMes.size() <= 16 &&
+               data.concepto is string && data.concepto.size() >= 2 && data.concepto.size() <= 100 &&
+               data.categoria is string && data.categoria.size() >= 2 && data.categoria.size() <= 40 &&
+               data.montoUsd is number && data.montoUsd > 0 && data.montoUsd <= 10000000 &&
+               data.montoBs is number && data.montoBs >= 0 && data.montoBs <= 10000000000 &&
+               data.tasaBcvAplicada is number && data.tasaBcvAplicada > 0 && data.tasaBcvAplicada <= 1000000 &&
+               data.distribuido is bool &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /gastos_mensuales/{gastoId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid || request.auth.uid in existing().memberUids);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid || request.auth.uid in resource.data.memberUids);
+
+        allow create: if isSignedIn() &&
+                         isValidId(gastoId) &&
+                         incoming().adminUid == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'condominioId', 'periodoMes', 'concepto', 'categoria',
+                           'montoUsd', 'montoBs', 'tasaBcvAplicada', 'distribuido',
+                           'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condominioId', 'periodoMes', 'concepto', 'categoria',
+                           'montoUsd', 'montoBs', 'tasaBcvAplicada', 'distribuido',
+                           'adminUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidGastoMensual(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominios/$(condominioId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(gastoId) &&
+                         existing().adminUid == request.auth.uid &&
+                         isValidGastoMensual(incoming()) &&
+                         incoming().condominioId == existing().condominioId &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'periodoMes', 'concepto', 'categoria', 'montoUsd', 'montoBs',
+                           'tasaBcvAplicada', 'distribuido', 'memberUids', 'updatedAt'
+                         ]);
+
+        allow delete: if isSignedIn() && isValidId(gastoId) && existing().adminUid == request.auth.uid;
+      }
+
+      // --- 4c. Subcolección 'pagos_reportados' ---
+      function isValidPagoReportado(data) {
+        return data.condominioId is string && data.condominioId == condominioId &&
+               data.vecinoId is string && isValidId(data.vecinoId) &&
+               data.unidad is string && data.unidad.size() >= 1 && data.unidad.size() <= 40 &&
+               data.periodoMes is string && data.periodoMes.size() >= 6 && data.periodoMes.size() <= 16 &&
+               data.metodoPago is string && data.metodoPago in ['pago_movil', 'transferencia', 'efectivo_usd', 'zelle'] &&
+               data.bancoOrigen is string && data.bancoOrigen.size() >= 2 && data.bancoOrigen.size() <= 60 &&
+               data.numeroReferencia is string && data.numeroReferencia.size() >= 3 && data.numeroReferencia.size() <= 40 &&
+               (!('telefonoEmisor' in data) || (data.telefonoEmisor is string && data.telefonoEmisor.size() <= 24)) &&
+               data.moneda is string && data.moneda in ['VES', 'USD'] &&
+               data.montoReportado is number && data.montoReportado > 0 && data.montoReportado <= 10000000000 &&
+               data.montoEquivalenteUsd is number && data.montoEquivalenteUsd > 0 && data.montoEquivalenteUsd <= 10000000 &&
+               data.tasaBcvUsada is number && data.tasaBcvUsada > 0 && data.tasaBcvUsada <= 1000000 &&
+               data.fechaPago is string && data.fechaPago.size() >= 6 && data.fechaPago.size() <= 20 &&
+               (!('comprobanteBase64' in data) || (data.comprobanteBase64 is string && data.comprobanteBase64.size() <= 80000)) &&
+               data.estado is string && data.estado in ['pendiente_revision', 'aprobado', 'rechazado'] &&
+               (!('notaConciliacion' in data) || (data.notaConciliacion is string && data.notaConciliacion.size() <= 200)) &&
+               data.adminUid is string && data.adminUid.size() >= 1 && data.adminUid.size() <= 128 &&
+               data.reportadoPorUid is string && data.reportadoPorUid.size() >= 1 && data.reportadoPorUid.size() <= 128 &&
+               isBoundedUidList(data.memberUids) &&
+               isValidTimestamp(data.createdAt) &&
+               isValidTimestamp(data.updatedAt);
+      }
+
+      match /pagos_reportados/{pagoId} {
+        allow get: if isSignedIn() &&
+                      (existing().adminUid == request.auth.uid || existing().reportadoPorUid == request.auth.uid);
+
+        allow list: if isSignedIn() &&
+                       (resource.data.adminUid == request.auth.uid || resource.data.reportadoPorUid == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(pagoId) &&
+                         incoming().reportadoPorUid == request.auth.uid &&
+                         incoming().estado == 'pendiente_revision' &&
+                         incoming().keys().hasAll([
+                           'condominioId', 'vecinoId', 'unidad', 'periodoMes',
+                           'metodoPago', 'bancoOrigen', 'numeroReferencia', 'moneda',
+                           'montoReportado', 'montoEquivalenteUsd', 'tasaBcvUsada', 'fechaPago',
+                           'estado', 'adminUid', 'reportadoPorUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'condominioId', 'vecinoId', 'unidad', 'periodoMes',
+                           'metodoPago', 'bancoOrigen', 'numeroReferencia', 'telefonoEmisor', 'moneda',
+                           'montoReportado', 'montoEquivalenteUsd', 'tasaBcvUsada', 'fechaPago',
+                           'comprobanteBase64', 'estado', 'notaConciliacion',
+                           'adminUid', 'reportadoPorUid', 'memberUids', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidPagoReportado(incoming()) &&
+                         existsAfter(/databases/$(database)/documents/condominios/$(condominioId)/vecinos/$(incoming().vecinoId));
+
+        allow update: if isSignedIn() &&
+                         isValidId(pagoId) &&
+                         existing().adminUid == request.auth.uid &&
+                         existing().estado == 'pendiente_revision' &&
+                         isValidPagoReportado(incoming()) &&
+                         incoming().condominioId == existing().condominioId &&
+                         incoming().vecinoId == existing().vecinoId &&
+                         incoming().reportadoPorUid == existing().reportadoPorUid &&
+                         incoming().adminUid == existing().adminUid &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().estado in ['aprobado', 'rechazado'] &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['estado', 'notaConciliacion', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(pagoId) && existing().adminUid == request.auth.uid;
+      }
+    }
+  }
+}

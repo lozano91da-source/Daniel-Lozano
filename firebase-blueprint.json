@@ -1,0 +1,335 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user profile and active condominium selection.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Authenticated Firebase UID" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "activeCondoId": { "type": "string", "description": "Currently selected condominium ID" },
+        "activeUnitId": { "type": "string", "description": "Currently selected unit/apartment ID" },
+        "activeRole": { "type": "string", "enum": ["junta", "vecino", "garita"] },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp" }
+      },
+      "required": ["userId", "displayName", "activeRole", "createdAt", "updatedAt"]
+    },
+    "CondoCode": {
+      "title": "CondoCode",
+      "description": "Direct lookup index mapping uppercase joinCode to condoId.",
+      "type": "object",
+      "properties": {
+        "condoId": { "type": "string" },
+        "condoName": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condoId", "condoName", "adminUid", "createdAt"]
+    },
+    "Condominium": {
+      "title": "Condominium",
+      "description": "Residential condominium or building in Maracaibo with BCV rate and payment accounts.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "address": { "type": "string" },
+        "joinCode": { "type": "string" },
+        "bcvRate": { "type": "number" },
+        "pagoMovilBank": { "type": "string" },
+        "pagoMovilPhone": { "type": "string" },
+        "pagoMovilId": { "type": "string" },
+        "transferBank": { "type": "string" },
+        "transferAccount": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "joinCode", "bcvRate", "adminUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "CondoUnit": {
+      "title": "CondoUnit",
+      "description": "Apartment or house unit with its aliquot percentage.",
+      "type": "object",
+      "properties": {
+        "condoId": { "type": "string" },
+        "unitNumber": { "type": "string" },
+        "ownerLabel": { "type": "string" },
+        "alicuotaPct": { "type": "number" },
+        "residentUid": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condoId", "unitNumber", "ownerLabel", "alicuotaPct", "residentUid", "adminUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "MonthlyExpense": {
+      "title": "MonthlyExpense",
+      "description": "Monthly condominium operating expense entered by Junta.",
+      "type": "object",
+      "properties": {
+        "condoId": { "type": "string" },
+        "billingPeriod": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "amountUsd": { "type": "number" },
+        "amountBs": { "type": "number" },
+        "adminUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condoId", "billingPeriod", "title", "category", "amountUsd", "amountBs", "adminUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "UnitInvoice": {
+      "title": "UnitInvoice",
+      "description": "Calculated monthly condo receipt/invoice per unit based on aliquot.",
+      "type": "object",
+      "properties": {
+        "condoId": { "type": "string" },
+        "unitId": { "type": "string" },
+        "unitNumber": { "type": "string" },
+        "billingPeriod": { "type": "string" },
+        "alicuotaPct": { "type": "number" },
+        "totalCondoUsd": { "type": "number" },
+        "amountDueUsd": { "type": "number" },
+        "bcvRate": { "type": "number" },
+        "amountDueBs": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "in_review", "paid", "overdue"] },
+        "receiptNumber": { "type": "string" },
+        "paidAtMs": { "type": "integer" },
+        "adminUid": { "type": "string" },
+        "residentUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condoId", "unitId", "unitNumber", "billingPeriod", "alicuotaPct", "totalCondoUsd", "amountDueUsd", "bcvRate", "amountDueBs", "status", "receiptNumber", "paidAtMs", "adminUid", "residentUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "PaymentReport": {
+      "title": "PaymentReport",
+      "description": "Pago Movil, bank transfer, or USD cash payment reported by a neighbor.",
+      "type": "object",
+      "properties": {
+        "condoId": { "type": "string" },
+        "invoiceId": { "type": "string" },
+        "unitId": { "type": "string" },
+        "unitNumber": { "type": "string" },
+        "billingPeriod": { "type": "string" },
+        "method": { "type": "string", "enum": ["pago_movil", "transferencia", "efectivo_usd", "zelle"] },
+        "bankName": { "type": "string" },
+        "referenceNumber": { "type": "string" },
+        "senderPhone": { "type": "string" },
+        "currency": { "type": "string", "enum": ["VES", "USD"] },
+        "amountReported": { "type": "number" },
+        "amountUsdEquivalent": { "type": "number" },
+        "bcvRateUsed": { "type": "number" },
+        "paymentDate": { "type": "string" },
+        "receiptPreviewBase64": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending_review", "approved", "rejected"] },
+        "reviewNote": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "reportedByUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condoId", "invoiceId", "unitId", "unitNumber", "billingPeriod", "method", "bankName", "referenceNumber", "currency", "amountReported", "amountUsdEquivalent", "bcvRateUsed", "paymentDate", "status", "adminUid", "reportedByUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "VisitorPass": {
+      "title": "VisitorPass",
+      "description": "QR visitor access pass for the gatehouse (garita).",
+      "type": "object",
+      "properties": {
+        "condoId": { "type": "string" },
+        "unitId": { "type": "string" },
+        "unitNumber": { "type": "string" },
+        "visitorName": { "type": "string" },
+        "visitorCedula": { "type": "string" },
+        "vehiclePlate": { "type": "string" },
+        "visitType": { "type": "string", "enum": ["Visita", "Delivery", "Servicio"] },
+        "qrToken": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "checked_in", "checked_out", "cancelled"] },
+        "checkedInAtMs": { "type": "integer" },
+        "checkedOutAtMs": { "type": "integer" },
+        "adminUid": { "type": "string" },
+        "createdByUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condoId", "unitId", "unitNumber", "visitorName", "visitorCedula", "visitType", "qrToken", "status", "checkedInAtMs", "checkedOutAtMs", "adminUid", "createdByUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "PaymentReminder": {
+      "title": "PaymentReminder",
+      "description": "Payment reminder notification for pending/overdue condo invoices.",
+      "type": "object",
+      "properties": {
+        "condoId": { "type": "string" },
+        "unitId": { "type": "string" },
+        "unitNumber": { "type": "string" },
+        "invoiceId": { "type": "string" },
+        "billingPeriod": { "type": "string" },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "amountDueUsd": { "type": "number" },
+        "amountDueBs": { "type": "number" },
+        "isRead": { "type": "boolean" },
+        "adminUid": { "type": "string" },
+        "targetUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condoId", "unitId", "unitNumber", "invoiceId", "billingPeriod", "title", "message", "amountDueUsd", "amountDueBs", "isRead", "adminUid", "targetUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Condominio": {
+      "title": "Condominio",
+      "description": "Conjunto residencial o edificio en Maracaibo con tasa BCV y cuentas de cobro.",
+      "type": "object",
+      "properties": {
+        "nombre": { "type": "string" },
+        "direccion": { "type": "string" },
+        "codigoAcceso": { "type": "string" },
+        "tasaBcv": { "type": "number" },
+        "bancoPagoMovil": { "type": "string" },
+        "telefonoPagoMovil": { "type": "string" },
+        "rifPagoMovil": { "type": "string" },
+        "bancoTransferencia": { "type": "string" },
+        "cuentaTransferencia": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["nombre", "codigoAcceso", "tasaBcv", "adminUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "Vecino": {
+      "title": "Vecino",
+      "description": "Propietario o residente asociado a una unidad con su alícuota y saldo.",
+      "type": "object",
+      "properties": {
+        "condominioId": { "type": "string" },
+        "unidad": { "type": "string" },
+        "nombreCompleto": { "type": "string" },
+        "telefono": { "type": "string" },
+        "alicuotaPct": { "type": "number" },
+        "saldoPendienteUsd": { "type": "number" },
+        "saldoPendienteBs": { "type": "number" },
+        "estadoSolvencia": { "type": "string", "enum": ["solvente", "pendiente", "en_revision", "moroso"] },
+        "codigoAcceso": { "type": "string" },
+        "residentUid": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condominioId", "unidad", "nombreCompleto", "alicuotaPct", "saldoPendienteUsd", "saldoPendienteBs", "estadoSolvencia", "residentUid", "adminUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "GastoMensual": {
+      "title": "GastoMensual",
+      "description": "Gasto mensual cargado por la Junta de Condominio para prorrateo por alícuota.",
+      "type": "object",
+      "properties": {
+        "condominioId": { "type": "string" },
+        "periodoMes": { "type": "string" },
+        "concepto": { "type": "string" },
+        "categoria": { "type": "string" },
+        "montoUsd": { "type": "number" },
+        "montoBs": { "type": "number" },
+        "tasaBcvAplicada": { "type": "number" },
+        "distribuido": { "type": "boolean" },
+        "adminUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condominioId", "periodoMes", "concepto", "categoria", "montoUsd", "montoBs", "tasaBcvAplicada", "distribuido", "adminUid", "memberUids", "createdAt", "updatedAt"]
+    },
+    "PagoReportado": {
+      "title": "PagoReportado",
+      "description": "Pago Móvil, transferencia o divisa reportada por un vecino para conciliación.",
+      "type": "object",
+      "properties": {
+        "condominioId": { "type": "string" },
+        "vecinoId": { "type": "string" },
+        "unidad": { "type": "string" },
+        "periodoMes": { "type": "string" },
+        "metodoPago": { "type": "string", "enum": ["pago_movil", "transferencia", "efectivo_usd", "zelle"] },
+        "bancoOrigen": { "type": "string" },
+        "numeroReferencia": { "type": "string" },
+        "telefonoEmisor": { "type": "string" },
+        "moneda": { "type": "string", "enum": ["VES", "USD"] },
+        "montoReportado": { "type": "number" },
+        "montoEquivalenteUsd": { "type": "number" },
+        "tasaBcvUsada": { "type": "number" },
+        "fechaPago": { "type": "string" },
+        "comprobanteBase64": { "type": "string" },
+        "estado": { "type": "string", "enum": ["pendiente_revision", "aprobado", "rechazado"] },
+        "notaConciliacion": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "reportadoPorUid": { "type": "string" },
+        "memberUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["condominioId", "vecinoId", "unidad", "periodoMes", "metodoPago", "bancoOrigen", "numeroReferencia", "moneda", "montoReportado", "montoEquivalenteUsd", "tasaBcvUsada", "fechaPago", "estado", "adminUid", "reportadoPorUid", "memberUids", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user profile and active condominium state."
+    },
+    "/condoCodes/{joinCode}": {
+      "schema": { "$ref": "#/entities/CondoCode" },
+      "description": "Invite code lookup for joining an existing condominium."
+    },
+    "/condominiums/{condoId}": {
+      "schema": { "$ref": "#/entities/Condominium" },
+      "description": "Condominium master settings, BCV rate, and Junta payment accounts."
+    },
+    "/condominiums/{condoId}/units/{unitId}": {
+      "schema": { "$ref": "#/entities/CondoUnit" },
+      "description": "Apartment and house units belonging to a condominium."
+    },
+    "/condominiums/{condoId}/expenses/{expenseId}": {
+      "schema": { "$ref": "#/entities/MonthlyExpense" },
+      "description": "Monthly expenses loaded by the Junta de Condominio."
+    },
+    "/condominiums/{condoId}/invoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/UnitInvoice" },
+      "description": "Calculated monthly aliquots and payment status per unit."
+    },
+    "/condominiums/{condoId}/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/PaymentReport" },
+      "description": "Neighbor payment reports awaiting or completing Junta reconciliation."
+    },
+    "/condominiums/{condoId}/visitorPasses/{passId}": {
+      "schema": { "$ref": "#/entities/VisitorPass" },
+      "description": "Visitor QR passes verified at the gatehouse (garita)."
+    },
+    "/condominiums/{condoId}/reminders/{reminderId}": {
+      "schema": { "$ref": "#/entities/PaymentReminder" },
+      "description": "Payment reminders sent to units with pending balances."
+    },
+    "/condominios/{condominioId}": {
+      "schema": { "$ref": "#/entities/Condominio" },
+      "description": "Colección maestra de condominios con tasa BCV y cuentas receptoras."
+    },
+    "/condominios/{condominioId}/vecinos/{vecinoId}": {
+      "schema": { "$ref": "#/entities/Vecino" },
+      "description": "Subcolección de vecinos/unidades con alícuota y saldo pendiente."
+    },
+    "/condominios/{condominioId}/gastos_mensuales/{gastoId}": {
+      "schema": { "$ref": "#/entities/GastoMensual" },
+      "description": "Subcolección de gastos mensuales registrados por la Junta."
+    },
+    "/condominios/{condominioId}/pagos_reportados/{pagoId}": {
+      "schema": { "$ref": "#/entities/PagoReportado" },
+      "description": "Subcolección de pagos reportados por vecinos para conciliación."
+    }
+  }
+}

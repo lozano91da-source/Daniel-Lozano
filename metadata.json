@@ -1,0 +1,6 @@
+{
+  "name": "CondoZulia",
+  "description": "Sistema de gestión y cobranza para condominios y residencias en Maracaibo con alícuotas en divisas/bolívares, reporte de Pago Móvil/transferencias, recibos, acceso QR en garita y recordatorios.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
